@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+body {
+  margin: 0;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+.topnav {
+  overflow: hidden;
+  background-color: #333;
+}
+
+.topnav a {
+  float: left;
+  color: #f2f2f2;
+  text-align: center;
+  padding: 14px 16px;
+  text-decoration: none;
+  font-size: 17px;
+}
+
+.topnav a:hover {
+  background-color: #ddd;
+  color: black;
+}
+
+.topnav a.active {
+  background-color: #04AA6D;
+  color: white;
+}
+</style>
+</head>
+<body>
+
+<div class="topnav">
+    <a class="active" href="index.html">Home</a>
+    <a href="https://mybinder.org/v2/gh/keonete/Cough-Simulation/HEAD">MyBinder Notebook</a>
+    <a href="https://github.com/keonete/Cough-Simulation">GitHub</a>
+
+</div>
+
+</body>
+</html>
+
+
+</html>
+
+<body>
+<div id="intro">
+    <h1>Cough Simulation Code</h1>
+</div>
+
+<pre><code>
+
+    import numpy as np
+    import matplotlib.pyplot as plt
+    import math
+    import random
+    import time
+    #random.seed(1000)
+    from joblib import Parallel, delayed
+    def Euclidean_distance(y):
+        x = np.array([0, 0, 2])
+        return np.sqrt((y[0] - x[0])**2 + (y[1] - x[1])**2 + (y[2] - x[2])**2)
+    def Coughing_Simulation(LAM, plots, plot_counter, final = False):
+        start = time.time()
+        # Flow Rates from LAM
+        v01, v02, v03, v04 = LAM[0], LAM[1], LAM[2], LAM[3]
+
+        # Vent Positions from LAM
+        x1, y1, z1 = LAM[4], LAM[5], LAM[6]
+        x2, y2, z2 = LAM[7], LAM[8], LAM[9]
+        x3, y3, z3 = LAM[10], LAM[11], LAM[12]
+        x4, y4, z4 = LAM[13], LAM[14], LAM[15]
+
+        # Simulation Parameters
+        d = .5 # Ventilation decay parameter
+        vent_R = .1 # Vent Radius
+        r0 = np.array([0, 0, 2]) # Standing height
+        t_tot = 1.75 # Total Simulation Time
+        dt = 1e-3 # time-step
+        V_t0 = 35 # Cough Velocity a.k.a inital droplet velocity
+        rho_i = 1000 # Density of Droplets
+        rho_a = 1.225 # Density of Air
+
+
+
+        N_c = np.array([0, 1, 0]) # Trajectory Cone
+        A_c = np.array([1, .5, 1]) # Deviatoric constant for trajectory
+        mu_f = 1.8e-5 # Viscosity Coefficient for Air
+        g = -9.8 # Gravity Constant
+
+        # Particle Generation
+        rho_i = 1000 # Density of Droplets
+        R_bar = .0001 # Mean droplet radius
+        A = .8 # Deviatoric constant
+        M_tot = 0 # Initial Cough Mass
+        R = [] # Particle Radius
+        M = [] # Particle mass
+        M_tot_bound = .000005 # Upper Bound for Total Mass of Droplets
+
+
+        while M_tot <= M_tot_bound:
+            epsilon = np.random.rand()*(2) + (-1) # random number -1 to 1
+
+            R_i = [R_bar*(1 + A*epsilon)] # Particle i Radius
+            M_i = [rho_i*(4/3)*np.pi*R_i[0]**3] # Particle i Mass
+
+            R += R_i
+            M += M_i
+
+            M_tot += M_i[0]
+
+        P_n = len(R)
+
+        M = np.asarray(M)
+        R = np.asarray(R)
+
+        active = np.ones(P_n, dtype = bool)
+
+
+        # Initializing vent position data structure
+        pos_vent = np.zeros((3,4))
+
+        pos_vent[0, :] = np.array((x1, x2, x3, x4))
+        pos_vent[1, :] = np.array((y1, y2, y3, y4))
+        pos_vent[2, :] = np.array((z1, z2, z3, z4))
+
+
+        # flow rate of vents
+        v0 = np.array((v01, v02, v03, v04))
+
+
+
+
+        # Initial Trajectories
+
+        N = np.zeros((3, P_n)) # Particle Trajectory Vectors
+        n = np.zeros((3, P_n)) # Normalized Particle Trajectory Vectors
+        v = np.zeros((3, P_n)) # Particle Velocities
+
+        for i in range(0, P_n):
+
+            # Random Cone Parameters
+            eta_x = np.random.rand()*2 + (-1)
+            eta_y = np.random.rand()
+            eta_z = np.random.rand()*2 + (-1)
+
+            # Particle i trajectory Vectors
+            N[0,i] = N_c[0] + A_c[0]*eta_x
+            N[1,i] = N_c[1] + A_c[1]*eta_y
+            N[2,i] = N_c[2] + A_c[2]*eta_z
+
+            #N_i = np.array([N_c[0] + A_c[0]*eta_x, N_c[1] + A_c[1]*eta_y, N_c[2] + A_c[2]*eta_z])
+
+            # Particle i normalized trajectory Vector
+            n[:,i] = N[:,i]/np.linalg.norm(N[:,i])
+
+            # Particle i initial velocity vectors
+            v[:,i] = V_t0*n[:,i]
+
+
+
+        # Particle Dynamics
+        F_grav = np.zeros((3,P_n))
+
+        F_grav[0, :] = 0
+        F_grav[1, :] = 0
+        F_grav[2, :] = M*F_grav[2, :]
+
+        F_drag = np.zeros((3,P_n))
+
+        r_Tot = []
+        r = np.zeros((3,P_n))
+        if final:
+            posData = np.zeros((1750, 3, P_n))
+        r[0,:] = r0[0]
+        r[1,:] = r0[1]
+        r[2,:] = r0[2]
+
+
+        times = []
+        plot_times = np.array([0.10, 0.25, 0.50, 1.0, 1.5, 1.75])
+        #plot_times = np.array([.1, .25, .5, 1.0, 2.0, 4.0])
+        #print(plot_times/dt)
+        r_Tot = np.zeros((3,P_n,len(plot_times)))
+        c = 0
+        counter = 0
+        for i in np.arange(0, t_tot, dt):
+
+            index = active == 1
+
+            times.append(i*dt)
+
+            flow_fields = np.zeros((3, 4, P_n)) # each vents velocity of medium
+
+            for j in np.arange(4):
+
+                # Equation 14
+                flow_fields[:, j, index] = (v0[j]*np.exp(-d*np.linalg.norm(pos_vent[:, j, np.newaxis] - r[:, index], axis = 0))/np.linalg.norm(pos_vent[:, j, np.newaxis] - r[:, index], axis = 0))*(pos_vent[:, j, np.newaxis] - r[:, index])
+
+            # Equation 15
+
+            # CHANGE TO flow_fields[:, :, index] $$$$$$
+            v_f = np.sum(flow_fields, axis = 1) # Velocity of Surrounding Medium
+
+            RE = 2*R*rho_a*np.linalg.norm(v_f - v, axis = 0)/mu_f # Reynolds Number
+
+            # Drag Coefficient
+            C_d = (((RE > 0) & (RE <= 1))*24/RE
+                   + ((RE > 1) & (RE <= 400))*24/np.power(RE,.646)
+                   + ((RE > 400) & (RE <= 3*10**5))*.5
+                   + ((RE> 3*10**5) & (RE <= 2*10**6))*.000366*math.exp(.4275)
+                   +(RE > 2*10**6)*.18)
+
+
+            # Drag Force
+            A_i = np.pi*np.power(R,2) # reference area
+
+
+            F_drag = .5*rho_a*C_d*np.linalg.norm(v_f - v, axis = 0)*(v_f - v)*A_i
+
+            # Total Force of system
+            F_tot = F_grav + F_drag
+
+            # Acceleration
+            accel = F_tot/M
+
+
+            #print("c: ", c)
+            if i in plot_times:
+            #if i in np.arange(len(plot_times)):
+                #print("i: ", i)
+                #print("r: ", r)
+                r_Tot[:, :, c] = r
+                #print("r_Tot: ", r_Tot[:,:,c])
+                c += 1
+
+            # Forward Euler Numerical Integration
+            if final:
+                posData[counter] = r
+            r[:, index] = r[:, index] + dt*v[:, index]
+            v[:, index] = v[:, index] + dt*accel[:, index]
+
+            for j in np.arange(4):
+                index = np.linalg.norm(pos_vent[:, j, np.newaxis] - r, axis = 0) <= vent_R
+
+                active[index] = False
+
+            index = r[2, :] <= 0
+            r[2, index] = 0
+
+            active[index] = False
+            counter += 1
+        r_final = r
+        r_Tot[:,:,-1] = r_final
+        #print("plot_counter: ", plot_counter)
+        #print("pos_vent: ", pos_vent )
+        if plots and plot_counter%8 == 0:
+            #for i in range(c):
+            for i in range(len(plot_times)):
+                fig = plt.figure(figsize = (15, 10))
+                ax = fig.add_subplot(projection = '3d')
+                ax.view_init(elev=5, azim = 15)
+
+                ax.set_title("Particle Position at time: " + str(plot_times[i]) + "seconds")
+                #print("i: ", i)
+                #print("lenRtot: ", len(r_Tot[0,0,:]))
+                scatter = ax.scatter3D(r_Tot[0, :, i], r_Tot[1, :, i] ,r_Tot[2, :, i], c = R, label = "Particle Position" )
+                ax.scatter(pos_vent[0, :], pos_vent[1, :], pos_vent[2, :], s=100, c='black', marker='s', label = "Vent Position")
+                ax.scatter([0], [0], [2], s = 300, c = "red", marker = 'x', label = "Cough Location")
+                cbar = plt.colorbar(scatter, shrink=0.5, pad=-.125)
+                ax.set_xlim((-2,2))
+                ax.set_ylim((0,4))
+                ax.set_zlim((0,4))
+                ax.set_xlabel("X Axis (m)")
+                ax.set_ylabel("Y Axis (m)")
+                ax.set_zlabel("Z Axis (m)")
+                ax.legend()
+                cbar.set_label('Particle Radius $(m)$ ', fontsize=10, loc = 'top')
+                plt.subplots_adjust(bottom=0.1)
+
+        end = time.time()
+        #print("Simulation RunTime: ",end - start)
+        if final:
+            return np.sum(active)/P_n, posData, counter, R
+        return np.sum(active)/P_n
+    def GA(G, S, P, TOL, v_low, v_high, x_low, x_high, y_low, y_high, z_low, z_high):
+        C = P
+        randGen = S - P - C
+        tol = TOL
+
+        v0_1 = np.random.rand(S)*(v_high[0] - v_low[0]) + v_low[0]
+        v0_2 = np.random.rand(S)*(v_high[1] - v_low[1]) + v_low[1]
+        v0_3 = np.random.rand(S)*(v_high[2] - v_low[2]) + v_low[2]
+        v0_4 = np.random.rand(S)*(v_high[3] - v_low[3]) + v_low[3]
+
+        x_1 = np.random.rand(S)*(x_high[0] - x_low[0]) + x_low[0]
+        x_2 = np.random.rand(S)*(x_high[1] - x_low[1]) + x_low[1]
+        x_3 = np.random.rand(S)*(x_high[2] - x_low[2]) + x_low[2]
+        x_4 = np.random.rand(S)*(x_high[3] - x_low[3]) + x_low[3]
+
+        y_1 = np.random.rand(S)*(y_high[0] - y_low[0]) + y_low[0]
+        y_2 = np.random.rand(S)*(y_high[1] - y_low[1]) + y_low[1]
+        y_3 = np.random.rand(S)*(y_high[2] - y_low[2]) + y_low[2]
+        y_4 = np.random.rand(S)*(y_high[3] - y_low[3]) + y_low[3]
+
+        z_1 = np.random.rand(S)*(z_high[0] - z_low[0]) + z_low[0]
+        z_2 = np.random.rand(S)*(z_high[1] - z_low[1]) + z_low[1]
+        z_3 = np.random.rand(S)*(z_high[2] - z_low[2]) + z_low[2]
+        z_4 = np.random.rand(S)*(z_high[3] - z_low[3]) + z_low[3]
+
+        v0 = np.vstack((v0_1, v0_2, v0_3, v0_4))
+
+        LAM = np.array((v0_1, v0_2, v0_3, v0_4, x_1, y_1, z_1, x_2, y_2, z_2, x_3, y_3, z_3, x_4, y_4, z_4))
+        PI = np.zeros(S)
+
+        best = np.zeros(G) # Minimum cost for each generation
+        PAve = np.zeros(G) # Parent average for each generation
+        Ave = np.zeros(G)
+
+        start = 0
+        for g in np.arange(G):
+            print("g: ", g)
+            PI[start:S] = Parallel(n_jobs=8)(delayed(Coughing_Simulation)(LAM[:, j], False, 1) for j in range(start, S))
+            #for j in np.arange(start, S):
+            #    PI[j], _, _, _= Coughing_Simulation(LAM[:, j], False, 1)
+                #print("THE TEST: ", PI[j] <= tol)
+
+                #if(PI[j] <= tol):
+                 #   return LAM[:, j], PI[j]
+
+            # Gather Top Parent Performers
+            index = np.argsort(PI)
+            PI = np.sort(PI)
+            LAM = LAM[:, index]
+
+            # Generate offspring random parameters and indices for vectorized offspring calculation
+            phi = np.random.rand(len(LAM), C)
+            ind1 = np.arange(0, C, 2)
+            ind2 = np.arange(1, C, 2)
+
+            # Generate Mutations
+            Mut_v0_1 = np.random.rand(randGen)*(v_high[0] - v_low[0]) + v_low[0]
+            Mut_v0_2 = np.random.rand(randGen)*(v_high[1] - v_low[1]) + v_low[1]
+            Mut_v0_3 = np.random.rand(randGen)*(v_high[2] - v_low[2]) + v_low[2]
+            Mut_v0_4 = np.random.rand(randGen)*(v_high[3] - v_low[3]) + v_low[3]
+
+            Mut_x_1 = np.random.rand(randGen)*(x_high[0] - x_low[0]) + x_low[0]
+            Mut_x_2 = np.random.rand(randGen)*(x_high[1] - x_low[1]) + x_low[1]
+            Mut_x_3 = np.random.rand(randGen)*(x_high[2] - x_low[2]) + x_low[2]
+            Mut_x_4 = np.random.rand(randGen)*(x_high[3] - x_low[3]) + x_low[3]
+
+            Mut_y_1 = np.random.rand(randGen)*(y_high[0] - y_low[0]) + y_low[0]
+            Mut_y_2 = np.random.rand(randGen)*(y_high[1] - y_low[1]) + y_low[1]
+            Mut_y_3 = np.random.rand(randGen)*(y_high[2] - y_low[2]) + y_low[2]
+            Mut_y_4 = np.random.rand(randGen)*(y_high[3] - y_low[3]) + y_low[3]
+
+            Mut_z_1 = np.random.rand(randGen)*(z_high[0] - z_low[0]) + z_low[0]
+            Mut_z_2 = np.random.rand(randGen)*(z_high[1] - z_low[1]) + z_low[1]
+            Mut_z_3 = np.random.rand(randGen)*(z_high[2] - z_low[2]) + z_low[2]
+            Mut_z_4 = np.random.rand(randGen)*(z_high[3] - z_low[3]) + z_low[3]
+
+            MUT_LAM = np.array((Mut_v0_1, Mut_v0_2, Mut_v0_3, Mut_v0_4, Mut_x_1, Mut_y_1, Mut_z_1, Mut_x_2, Mut_y_2, Mut_z_2, Mut_x_3, Mut_y_3, Mut_z_3, Mut_x_4, Mut_y_4, Mut_z_4))
+
+            # Combine LAMs of top parents, their offsprings, and the mutations
+            LAM = np.hstack((LAM[:,0:P], #Best Parents
+                            phi[:, ind1]*LAM[:, ind1] + (1 - phi[:, ind1])*LAM[:,ind2], # First set of offsprings
+                            phi[:,ind2]*LAM[:,ind1] + (1 - phi[:, ind2])*LAM[:,ind2], # Second set of offsprings
+                            MUT_LAM # Mutation LAM
+                           ))
+            start = P
+            best[g] = PI[0]
+            PAve[g] = np.mean(PI[0:P])
+            Ave[g] = np.mean(PI)
+        return LAM, PI, best, PAve, Ave
+    end = time.time()
+    #print("Simulation RunTime: ",end - start)
+    v = np.array(([0, .5, 0, .5],[1, 1.5, 1, 1.5]))
+    x = np.array(([-.5, -1.5, -1.5, -.5], [1.5, .5, 1., 1.5]))
+    y = np.array(([1., 2., 1., 2.], [3., 4., 3., 4.]))
+    z = np.array(([2, 2, 0, 0], [4, 4, 1, 1]))
+
+    v_low = v[0]
+    v_high = v[1]
+
+    x_low = x[0]
+    x_high = x[1]
+
+    y_low = y[0]
+    y_high = y[1]
+
+    z_low = z[0]
+    z_high = z[1]
+    v_high[0]
+    start = time.time()
+    Optimal_LAM, PI_data, best_data, PAve_data, Ave_data = GA(50, 24, 6, .001, v_low, v_high, x_low, x_high, y_low, y_high, z_low, z_high)
+
+    _, posData, c, R = Coughing_Simulation(Optimal_LAM[:, 0], False, 8, final = True)
+    # def drawframe(n):  # Function to create plot
+    #     dots1.set_xdata(posData[n][0, :])
+    #     dots1.set_ydata(posData[n][1, :])
+    #     dots1.set_3d_properties(posData[n][2, :])
+
+
+    #     dots2.set_xdata(pos_vent[0, :])
+    #     dots2.set_ydata(pos_vent[1, :])
+    #     dots2.set_3d_properties(pos_vent[2, :])
+
+    #     dots3.set_xdata(np.array([0]))
+    #     dots3.set_ydata(np.array([0]))
+    #     dots3.set_3d_properties(np.array([2]))
+
+    #     Title.set_text('Solution Animation: Time = {0:4f}'.format(n * 1e-3))
+    #     return (dots1, dots2, dots3)
+    # # # Set up plot for animation
+
+
+
+
+
+
+    # from matplotlib import animation
+    # from matplotlib import rc
+    # from mpl_toolkits.mplot3d import Axes3D
+    # from IPython import display
+    opt_LAM = Optimal_LAM[:,0]
+    x1, y1, z1 = opt_LAM[4], opt_LAM[5], opt_LAM[6]
+    x2, y2, z2 = opt_LAM[7], opt_LAM[8], opt_LAM[9]
+    x3, y3, z3 = opt_LAM[10], opt_LAM[11], opt_LAM[12]
+    x4, y4, z4 = opt_LAM[13], opt_LAM[14], opt_LAM[15]
+    #print(x1)
+    pos_vent = np.zeros((3,4))
+    pos_vent[0, :] = np.array((x1, x2, x3, x4))
+    pos_vent[1, :] = np.array((y1, y2, y3, y4))
+    pos_vent[2, :] = np.array((z1, z2, z3, z4))
+
+    # fig = plt.figure(figsize=(20, 8))
+
+    # ax = fig.add_subplot(111, projection='3d')
+    # ax.set_xlabel('X (m)')
+    # ax.set_ylabel('Y (m)')
+    # ax.set_zlabel('Z (m)')
+    # ax.set_xlim((-2, 2))
+    # ax.set_ylim((0, 4))
+    # ax.set_zlim((0, 4))
+    # ax.view_init(elev=5, azim = 15)
+    # #ax.view_init(elev=70., azim=40)
+
+    # Title = ax.set_title('')
+
+    # dots1, = ax.plot([], [], [], 'r.', ms=10) # particles
+    # dots2, = ax.plot([], [], [], 'g.', marker = 's', ms=10) # vent
+    # dots3, = ax.plot([], [], [], 'k.', marker = 'X', ms= 10) # cough
+
+    # ax.legend(['Particles', 'Vent', 'Cough'], bbox_to_anchor=(0.55, 1.0))
+
+    # anim = animation.FuncAnimation(fig, drawframe, frames=200, interval=20, blit=True)
+    # #cbar = plt.colorbar(dots1, shrink=0.5, pad=-.125)
+    # video = anim.to_html5_video()
+    # html = display.HTML(video)
+    # display.display(html)
+    # plt.close()
+
+    # # rc('animation', html='html5')
+
+    # # anim
+    # # writervideo = animation.FFMpegWriter(fps=60)
+    # # anim.save('animCough.mp4', writer=writervideo)
+    from matplotlib import animation
+    from matplotlib import rc
+    from mpl_toolkits.mplot3d import Axes3D
+    from IPython import display
+
+    marker_size = 50
+    fig = plt.figure(figsize = (15, 10))
+    #fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d', autoscale_on=False, xlim=(-2,2), ylim=(0,4), zlim=(0,4))
+    #ax = fig.add_subplot(111, aspect='equal', autoscale_on=False, xlim=(0, 1), ylim=(0, 1))
+    #ax.scatter(pos_vent[0, :], pos_vent[1, :], pos_vent[2, :], s=100, c='black', marker='s', label = "Vent Position")
+    #ax.scatter([0], [0], [2], s = 300, c = "red", marker = 'x', label = "Cough Location")
+    s = ax.scatter3D(posData[0][0,:], posData[0][1,:], posData[0][2,:], s = marker_size, c = R, cmap = "RdBu_r", marker = ".", edgecolor = None)
+    cb = fig.colorbar(s)
+    ax.view_init(elev=5, azim = 15)
+    # get the axis for the colobar
+    cax = cb.ax
+    ax.legend(['Particles', 'Vent', 'Cough'], bbox_to_anchor=(0.55, 1.0))
+    ax.set_title("Cough and Ventilation Simulation")
+    def animate(i):
+        """ Perform animation step. """
+        # clear both plotting axis and colorbar axis
+        ax.clear()
+        cax.cla()
+        #the new axes must be re-formatted
+
+        ax.set_xlabel('X (m)')
+        ax.set_ylabel('Y (m)')
+        ax.set_zlabel('Z (m)')
+        ax.set_xlim((-2, 2))
+        ax.set_ylim((0, 4))
+        ax.set_zlim((0, 4))
+        #ax.grid(b=None)
+        #ax.set_xlabel('x [m]')
+        #ax.set_ylabel('y [m]')
+        # and the elements for this frame are added
+        ax.text(0.02, 0.95,40, 'Solution Animation: Time = {0:4f}'.format(i * .001), transform=ax.transAxes)
+        #ax.text(.02,0,15,'Solution Animation: Time = {0:4f}'.format(i * .001))
+        #Title.set_text('Solution Animation: Time = {0:4f}'.format(i * .01))
+        s = ax.scatter(posData[i][0,:], posData[i][1,:], posData[i][2,:], s = marker_size, c = R, marker = ".", edgecolor = None)
+        cbar = fig.colorbar(s, shrink=0.5, pad=-.125, cax=cax)
+        ax.scatter(pos_vent[0, :], pos_vent[1, :], pos_vent[2, :], s=100, c='black', marker='s', label = "Vent Position")
+        ax.scatter([0], [0], [2], s = 300, c = "red", marker = 'x', label = "Cough Location")
+        cbar.set_label('Particle Radius $(m)$ ', fontsize=10, loc = 'top')
+        ax.legend(['Particles', 'Vent', 'Cough'], bbox_to_anchor=(0.55, 1.0))
+        ax.set_title("Cough and Ventilation Simulation")
+    ani = animation.FuncAnimation(fig, animate, frames=1750, interval = 15)
+    video = ani.to_html5_video()
+    html = display.HTML(video)
+    display.display(html)
+    plt.close()
+
+    end = time.time()
+    print("Simulation RunTime: ",end - start)
+    # rc('animation', html='html5')
+
+    # writervideo = animation.FFMpegWriter(fps=60)
+    # ani.save('animCough.mp4', writer=writervideo)
+    #ani.save('animation2.gif', writer='pillow')
+
+
+
+
+
+
+
+
+</code></pre>
